@@ -42,6 +42,44 @@ def writeMatToFile(mat, fn):
     f.write('\n'.join(strVec))
     f.close()
 
+def writeSparseMatToFile(mat, fn, ignore = 0):
+    strVec = []
+    nrow = len(mat)
+    ncol = len(mat[0])
+    for rowIdx, row in enumerate(mat):
+        for colIdx, item in enumerate(row):
+            if item != ignore:
+                strVec.append('%d %d %s' % (rowIdx, colIdx, str(item)))
+    f = open(fn, 'w')
+    f.write('%d %d\n' % (nrow, ncol))
+    f.write('\n'.join(strVec))
+    f.close()
+
+def getSparseMatFromFile(fn, type, ignore = 0, sepr = '\n', sepc = ' '):
+    f = open(fn, 'r')
+    strVec = f.read().split(sepr)
+    f.close()
+    (nrow, ncol) = map(int, strVec[0].split(sepc))
+    mat = [[ignore for i in range(ncol)] for i in range(nrow)]
+    for info in strVec[1:]:
+        infoArr = info.split(sepc)
+        (rowIdx, colIdx, value) = (int(infoArr[0]), int(infoArr[1]), type(infoArr[2]))
+        mat[rowIdx][colIdx] = value
+    return mat
+
+def addToSparseMatFromFile(fn, mat, type, sepr = '\n', sepc = ' '):
+    f = open(fn, 'r')
+    strVec = f.read().split(sepr)
+    f.close()
+    for info in strVec[1:]:
+        infoArr = info.split(sepc)
+        (rowIdx, colIdx, value) = (int(infoArr[0]), int(infoArr[1]), type(infoArr[2]))
+        mat[rowIdx][colIdx] += value
+
+def transferToSparseMatFile(fold, fnew, type, ignore = 0):
+    mat = getMatFromFile(fold, type)
+    writeSparseMatToFile(mat, fnew, ignore)
+
 def getHanziMapping(fn):
     f = file(fn, 'r')
     str = f.read().decode('utf-8')
@@ -66,40 +104,45 @@ def getTextSet(fn, size = float('inf')):
 
 
 def getFreqData(text, freqVec, freqMat, word2Number, number2Word):
-    matChanged = [False for i in range(config.N_HANZI)]
     prevWordIdx = None
     prevValid = False
     for idx, word in enumerate(text):
-        if word < config.HANZI_START or word > config.HANZI_END:
+        # if word < config.HANZI_START or word > config.HANZI_END:
+        #     prevValid = False
+        #     continue
+        # try:
+        #     wordIdx = word2Number[word]
+        # except:
+        #     prevValid = False
+        #     # logging.info('Exception: %s not in basic Hanzi. Name: %s' % (word, unicodedata.name(word)))
+        #     continue
+        if not word2Number.has_key(word):
             prevValid = False
             continue
-        try:
-            wordIdx = word2Number[word]
-        except:
-            prevValid = False
-            # logging.info('Exception: %s not in basic Hanzi. Name: %s' % (word, unicodedata.name(word)))
-            continue
+        wordIdx = word2Number[word]
         freqVec[wordIdx] += 1
         if prevValid is True:
             freqMat[prevWordIdx][wordIdx] += 1
-            matChanged[prevWordIdx] = True
+            prevWordIdx = wordIdx
+            continue
         prevWordIdx = wordIdx
         prevValid = True
-    return matChanged
+
 
 def writeFreqFile(fn, hanzi2Idx, idx2Hanzi):
     logging.info('Start processing file: %s ...' % (fn))
     nHanzi = config.N_HANZI
-    textSet = getTextSet(fn)
+    f = open(fn, 'r')
+    text = f.read().decode('utf-8')
+    f.close()
     freqVec = [0 for i in range(nHanzi)]
     freqMat = [[0 for i in range(nHanzi)] for i in range(nHanzi)]
-    for (idx, text) in enumerate(textSet):
-        getFreqData(text, freqVec, freqMat, hanzi2Idx, idx2Hanzi)
+    getFreqData(text, freqVec, freqMat, hanzi2Idx, idx2Hanzi)
     writeVecToFile(freqVec, fn + config.VEC_TMP_SUFFIX)
-    writeMatToFile(freqMat, fn + config.MAT_TMP_SUFFIX)
+    writeSparseMatToFile(freqMat, fn + config.MAT_TMP_SUFFIX)
 
 def mergeVecData(files):
-    freqVec = []
+    freqVec = [0 for i in range(config.N_HANZI)]
     for (idx, file) in enumerate(files):
         logging.info('Merging vec freq file NO.%d ...' % (idx))
         f = open(file, 'r')
@@ -112,18 +155,10 @@ def mergeVecData(files):
     return freqVec
 
 def mergeMatData(files):
-    freqMat = []
+    freqMat = [[0 for i in range(config.N_HANZI)] for i in range(config.N_HANZI)]
     for (idx, file) in enumerate(files):
         logging.info('Merging mat freq file NO.%d ...' % (idx))
-        f = open(file, 'r')
-        strVec = f.read().split('\n')
-        mat = [map(int, row.split(' ')) for row in strVec]
-        if idx is 0:
-            freqMat = [[0 for i in range(len(mat))]for i in range(len(mat))]
-        for (rowId, row) in enumerate(mat):
-            for (colId, freq) in enumerate(row):
-                freqMat[rowId][colId] += freq
-        f.close()
+        addToSparseMatFromFile(file, freqMat, int)
     return freqMat
 
 def processVec(vec, func = math.log, precision = 4):
@@ -140,7 +175,7 @@ def processMat(mat, func = math.log, precision = 4):
 def build():
     tstart = time.time()
     logging.info('Getting Hanzi from file ...')
-    hanzi2Idx, idx2Hanzi = getHanziMapping('WordTable.txt')
+    hanzi2Idx, idx2Hanzi = getHanziMapping(config.HANZI_LIST_FILE)
     files = config.DATA_FILE_BASE
 
     logging.info('Starting multi-process procedure ...')
@@ -156,7 +191,7 @@ def build():
     mergedVec = mergeVecData(vecFiles)
     mergedMat = mergeMatData(matFiles)
     writeVecToFile(mergedVec, config.VEC_FREQ_FILE)
-    writeMatToFile(mergedMat, config.MAT_FREQ_FILE)
+    writeSparseMatToFile(mergedMat, config.MAT_FREQ_FILE)
 
     logging.info('Starting prob calculation procedure ...')
     processedVec = processVec(mergedVec)
@@ -176,6 +211,32 @@ def build():
 def addData(fn):
     tstart = time.time()
     logging.info('Getting Hanzi from file ...')
+    hanzi2Idx, idx2Hanzi = getHanziMapping(config.HANZI_LIST_FILE)
+    logging.info('Reading language material ...')
+    f = open(fn, 'r')
+    text = f.read().decode('utf-8')
+    f.close()
+    logging.info('Getting original vec freq file ...')
+    freqVec = getVecFromFile(config.VEC_FREQ_FILE, type = int)
+    logging.info('Getting original mat freq file ...')
+    freqMat = getSparseMatFromFile(config.MAT_FREQ_FILE, type = int)
+    logging.info('Append data from new material ...')
+    getFreqData(text, freqVec, freqMat, hanzi2Idx, idx2Hanzi)
+    logging.info('Writing new freq files ...')
+    writeVecToFile(freqVec, config.VEC_FREQ_FILE)
+    writeSparseMatToFile(freqMat, config.MAT_FREQ_FILE)
+    logging.info('Starting prob calculation process ...')
+    processedVec = processVec(freqVec)
+    processedMat = processMat(freqMat)
+    logging.info('Writing new prob files ...')
+    writeVecToFile(processedVec, config.VEC_PROB_FILE)
+    writeMatToFile(processedMat, config.MAT_PROB_FILE)
+    (hour, minute, second) = getTime(time.time() - tstart)
+    logging.info('Successfully add new data to SLM model, time consumed: %dmin%ds' % (minute, second))
+
+def addFreqData(fn):
+    tstart = time.time()
+    logging.info('Getting Hanzi from file ...')
     hanzi2Idx, idx2Hanzi = getHanziMapping('WordTable.txt')
     logging.info('Reading language material ...')
     f = open(fn, 'r')
@@ -184,27 +245,28 @@ def addData(fn):
     logging.info('Getting original vec freq file ...')
     freqVec = getVecFromFile(config.VEC_FREQ_FILE, type = int)
     logging.info('Getting original mat freq file ...')
-    freqMat = getMatFromFile(config.MAT_FREQ_FILE, type = int)
+    freqMat = getSparseMatFromFile(config.MAT_FREQ_FILE, type = int)
     logging.info('Append data from new material ...')
-    matChanged = getFreqData(text, freqVec, freqMat, hanzi2Idx, idx2Hanzi)
-    logging.info('Detected %d rows changed in mat.' % (matChanged.count(True)))
+    getFreqData(text, freqVec, freqMat, hanzi2Idx, idx2Hanzi)
     logging.info('Writing new freq files ...')
     writeVecToFile(freqVec, config.VEC_FREQ_FILE)
-    writeMatToFile(freqMat, config.MAT_FREQ_FILE)
+    writeSparseMatToFile(freqMat, config.MAT_FREQ_FILE)
+    (hour, minute, second) = getTime(time.time() - tstart)
+    logging.info('Successfully add new freq data to SLM model, time consumed: %dmin%ds' % (minute, second))
+
+def refresh():
+    logging.info('Getting original vec freq file ...')
+    freqVec = getVecFromFile(config.VEC_FREQ_FILE, type = int)
+    logging.info('Getting original mat freq file ...')
+    freqMat = getSparseMatFromFile(config.MAT_FREQ_FILE, type = int)
     logging.info('Starting prob calculation process ...')
     processedVec = processVec(freqVec)
-    # processedMat = freqMat
-    # for rowIdx, changed in enumerate(matChanged):
-        # if changed is True:
-        #     freqMat[rowIdx] = processVec(freqMat[rowIdx])[:]
-        # freqMat[rowIdx] = processVec(freqMat[rowIdx])[:]
     processedMat = processMat(freqMat)
     logging.info('Writing new prob files ...')
     writeVecToFile(processedVec, config.VEC_PROB_FILE)
-    # writeMatToFile(freqMat, config.MAT_PROB_FILE)
     writeMatToFile(processedMat, config.MAT_PROB_FILE)
-    (hour, minute, second) = getTime(time.time() - tstart)
-    logging.info('Successfully add new data to SLM model, time consumed: %dmin%ds' % (minute, second))
+    logging.info('Successfully refresh SLM model.')
+
 
 def removeFreqData(text, freqVec, freqMat, word2Number, number2Word):
     matChanged = [False for i in range(config.N_HANZI)]
@@ -273,9 +335,12 @@ if __name__ == '__main__':
         fn = args[1]
         addData(fn)
         sys.exit()
-    elif cmd in ['minus']:
+    elif cmd in ['addf']:
         fn = args[1]
-        removeData(fn)
+        addFreqData(fn)
+        sys.exit()
+    elif cmd in ['refresh']:
+        refresh()
         sys.exit()
     else:
         print 'Command not found.'
