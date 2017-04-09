@@ -1,11 +1,12 @@
 .DS_Store
 .idea
-*.txt
-*.prob
-*.freq
 *.pyc
 BaiduBaikeHanzi
 BaiduBaikeWord
 SinaNews
 Wikipedia
-save
+mat.*
+vec.*
+GramTable.txt
+WordTable.txt
+Pinyin.txt
